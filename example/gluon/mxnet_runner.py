@@ -13,13 +13,14 @@ class MXNetRunner(object):
         self.data_creator = data_creator
         self.model_creator = model_creator
         self.loss_creator = loss_creator
+        from mxnet.metric import Accuracy, TopKAccuracy, CompositeEvalMetric
+        self.metric = CompositeEvalMetric([Accuracy(), TopKAccuracy(5)])  # TODO: add metric creator?
         self.args = args
         self.is_worker = False
         self.epoch = 0
 
     def setup_distributed(self, env):
         env["DMLC_NODE_HOST"] = self.get_node_ip()
-        self.env = env
         if env["DMLC_ROLE"] == "worker":
             self.is_worker = True
 
@@ -37,20 +38,19 @@ class MXNetRunner(object):
                                                            'momentum': self.args.momentum,
                                                            'multi_precision': True},
                                          kvstore=self.kv)
-            print(self.kv.num_workers)
-            print(self.kv.rank)
         else:  # server or scheduler
             subprocess.Popen("python -c 'import mxnet'", shell=True, env=env)
 
     def step(self):
         """Runs a training epoch and updates the model parameters."""
+        self.epoch += 1
+        stats = dict()
+        stats["epoch"] = self.epoch
         if self.is_worker:
             import time
             tic = time.time()
             self.train_dataset.reset()
-            from mxnet.metric import Accuracy, TopKAccuracy, CompositeEvalMetric
-            metric = CompositeEvalMetric([Accuracy(), TopKAccuracy(5)])
-            metric.reset()
+            self.metric.reset()
             btic = time.time()
             for i, batch in enumerate(self.train_dataset):
                 import mxnet as mx
@@ -62,7 +62,7 @@ class MXNetRunner(object):
                 from mxnet import autograd as ag
                 with ag.record():
                     for x, y in zip(data, label):
-                        z = self.model(x)
+                        z = self.model(x)  # forward
                         L = self.loss(z, y)
                         # store the loss and do backward after we have done forward
                         # on all GPUs for better speed on multiple GPUs.
@@ -70,19 +70,26 @@ class MXNetRunner(object):
                         outputs.append(z)
                     ag.backward(Ls)
                 self.trainer.step(batch.data[0].shape[0])
-                metric.update(label, outputs)
+                self.metric.update(label, outputs)
                 if self.args.log_interval and not (i + 1) % self.args.log_interval:
-                    name, acc = metric.get()
+                    name, acc = self.metric.get()
+                    stats["iteration " + str(i)] = '%s=%f, %s=%f' % (name[0], acc[0], name[1], acc[1])
                     print('Epoch[%d] Batch [%d]\tSpeed: %f samples/sec\t%s=%f, %s=%f' % (
                         self.epoch, i, self.args.batch_size / (time.time() - btic), name[0], acc[0], name[1], acc[1]))
                 btic = time.time()
+            epoch_time = time.time() - tic
+            stats["epoch_time"] = epoch_time
+        return stats
 
     def shutdown(self):
-        """Attempts to shut down the worker."""
-        # del self.model
-        # del self.train_data
-        # del self.val_data
-        pass
+        """Attempts to shut down the runner."""
+        if self.is_worker:
+            del self.model
+            del self.train_dataset
+            del self.test_dataset
+            del self.kv
+            del self.trainer
+            del self.loss
 
     def get_node_ip(self):
         """Returns the IP address of the current node."""
@@ -117,7 +124,7 @@ class MXNetTrainer(object):
         # Generate actor class
         Runner = ray.remote(MXNetRunner)
 
-        # Start workers
+        # Start runners
         self.runners = [
             Runner.remote(
                 data_creator,
@@ -150,10 +157,17 @@ class MXNetTrainer(object):
         subprocess.Popen("python -c 'import mxnet'", shell=True, env=env)  # env need to contain system env to run bash
 
         ray.get([
-            worker.setup_distributed.remote(envs[i])
-            for i, worker in enumerate(self.runners)
+            runner.setup_distributed.remote(envs[i])
+            for i, runner in enumerate(self.runners)
         ])
 
     def train(self):
         """Runs a training epoch."""
-        ray.get([w.step.remote() for w in self.runners])
+        stats = ray.get([w.step.remote() for w in self.runners])
+        return stats
+
+    def shutdown(self):
+        """Shuts down runners and releases resources."""
+        for runner in self.runners:
+            runner.shutdown.remote()
+            runner.__ray_terminate__.remote()

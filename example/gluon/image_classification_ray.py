@@ -98,7 +98,7 @@ if __name__ == '__main__':
                         help='random seed to use. Default=123.')
     parser.add_argument('--kvstore', type=str, default='device',
                         help='kvstore to use for trainer/module.')
-    parser.add_argument('--log-interval', type=int, default=2,
+    parser.add_argument('--log-interval', type=int, default=50,
                         help='Number of batches to wait before logging.')
     opt = parser.parse_args()
 
@@ -106,5 +106,10 @@ if __name__ == '__main__':
     from example.gluon.mxnet_runner import MXNetTrainer
     ray.init()
     trainer = MXNetTrainer(get_data_iters, get_model, get_loss, opt)
-    trainer.train()
+    print("Training for one epoch started")
+    train_stats = trainer.train()
+    print("Training for one epoch ended")
+    print("Training stats:")
+    for stat in train_stats:
+        print(stat)
     ray.shutdown()
