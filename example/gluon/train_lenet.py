@@ -5,6 +5,8 @@ from mxnet import gluon
 from mxnet.gluon import nn
 from mxnet.test_utils import get_mnist_iterator
 from mxnet_runner import MXNetTrainer
+from zoo import init_spark_on_local, init_spark_on_yarn
+from zoo.ray.util.raycontext import RayContext
 
 
 # Reference: https://mxnet.apache.org/api/python/docs/tutorials/packages/gluon/image/mnist.html
@@ -88,14 +90,31 @@ if __name__ == '__main__':
                         help='Number of batches to wait before logging.')
     opt = parser.parse_args()
 
-    ray.init()
+    # ray.init()
+
+    # sc = init_spark_on_local(cores=8)
+    sc = init_spark_on_yarn(
+        hadoop_conf="/opt/work/hadoop-2.7.2/etc/hadoop",
+        conda_name="mxnet",
+        num_executor=4,
+        executor_cores=16,
+        executor_memory="10g",
+        driver_memory="2g",
+        driver_cores=4,
+        extra_executor_memory_for_ray="30g",
+        extra_python_lib="mxnet_runner.py")
+
+    ray_ctx = RayContext(sc=sc,
+                         object_store_memory="2g",
+                         env={"http_proxy": "http://child-prc.intel.com:913",
+                              "https_proxy": "http://child-prc.intel.com:913"})
+    ray_ctx.init(object_store_memory="2g")
     config = create_config(opt)
     trainer = MXNetTrainer(get_data_iters, get_model, get_loss, get_metrics, config)
     for epoch in range(opt.epochs):
-        print("Training for one epoch started")
         train_stats = trainer.train()
-        print("Training for one epoch ended")
-        print("Training stats:")
         for stat in train_stats:
             print(stat)
-    ray.shutdown()
+    ray_ctx.stop()
+    sc.stop()
+    # ray.shutdown()
