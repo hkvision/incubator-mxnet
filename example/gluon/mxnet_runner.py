@@ -1,21 +1,20 @@
-import ray.services
-from contextlib import closing
-import socket
-from dmlc_tracker.tracker import get_host_ip
-import subprocess
 import os
+import subprocess
+import socket
+from contextlib import closing
+from dmlc_tracker.tracker import get_host_ip
+import ray.services
 
 
 class MXNetRunner(object):
     """Manages a MXNet model for training."""
 
-    def __init__(self, data_creator, model_creator, loss_creator, args):
+    def __init__(self, data_creator, model_creator, loss_creator, metrics_creator, config):
         self.data_creator = data_creator
         self.model_creator = model_creator
         self.loss_creator = loss_creator
-        from mxnet.metric import Accuracy, TopKAccuracy, CompositeEvalMetric
-        self.metric = CompositeEvalMetric([Accuracy(), TopKAccuracy(5)])  # TODO: add metric creator?
-        self.args = args
+        self.metrics_creator = metrics_creator
+        self.config = config  # TODO: add check for config keys
         self.is_worker = False
         self.epoch = 0
 
@@ -27,19 +26,20 @@ class MXNetRunner(object):
         if self.is_worker:
             os.environ.update(env)
             import mxnet as mx
-            self.kv = mx.kv.create(self.args.kvstore)
-            self.train_dataset, self.test_dataset = self.data_creator(self.args, self.kv)
-            self.model = self.model_creator(self.args)
-            self.loss = self.loss_creator(self.args)
+            self.kv = mx.kv.create(self.config["kvstore"])
+            self.train_dataset, self.test_dataset = self.data_creator(self.config, self.kv)
+            self.model = self.model_creator(self.config)
+            self.loss = self.loss_creator(self.config)
+            self.metrics = self.metrics_creator(self.config)
             from mxnet import gluon
             self.trainer = gluon.Trainer(self.model.collect_params(), 'sgd',
-                                         optimizer_params={'learning_rate': self.args.lr,
-                                                           'wd': self.args.wd,
-                                                           'momentum': self.args.momentum,
-                                                           'multi_precision': True},
+                                         optimizer_params=self.config["optimizer_params"],
                                          kvstore=self.kv)
-        else:  # server or scheduler
-            subprocess.Popen("python -c 'import mxnet'", shell=True, env=env)
+        else:  # server
+            # Need to use the environment on each raylet process for the correct python environment.
+            modified_env = os.environ.copy()
+            modified_env.update(env)
+            subprocess.Popen("python -c 'import mxnet'", shell=True, env=modified_env)
 
     def step(self):
         """Runs a training epoch and updates the model parameters."""
@@ -50,11 +50,12 @@ class MXNetRunner(object):
             import time
             tic = time.time()
             self.train_dataset.reset()
-            self.metric.reset()
+            self.metrics.reset()
             btic = time.time()
             for i, batch in enumerate(self.train_dataset):
                 import mxnet as mx
                 from mxnet import gluon
+                # TODO: support multiple cpus?
                 data = gluon.utils.split_and_load(batch.data[0].astype("float32"), ctx_list=[mx.cpu()], batch_axis=0)
                 label = gluon.utils.split_and_load(batch.label[0].astype("float32"), ctx_list=[mx.cpu()], batch_axis=0)
                 outputs = []
@@ -70,12 +71,15 @@ class MXNetRunner(object):
                         outputs.append(z)
                     ag.backward(Ls)
                 self.trainer.step(batch.data[0].shape[0])
-                self.metric.update(label, outputs)
-                if self.args.log_interval and not (i + 1) % self.args.log_interval:
-                    name, acc = self.metric.get()
-                    stats["iteration " + str(i)] = '%s=%f, %s=%f' % (name[0], acc[0], name[1], acc[1])
-                    print('Epoch[%d] Batch [%d]\tSpeed: %f samples/sec\t%s=%f, %s=%f' % (
-                        self.epoch, i, self.args.batch_size / (time.time() - btic), name[0], acc[0], name[1], acc[1]))
+                self.metrics.update(label, outputs)
+                if "log_interval" in self.config and not (i + 1) % self.config["log_interval"]:
+                    names, accs = self.metrics.get()
+                    if not isinstance(names, list):
+                        names = [names]
+                        accs = [accs]
+                    for name, acc in zip(names, accs):
+                        print('Epoch[%d] Batch [%d]\tSpeed: %f samples/sec\t%s=%f' % (
+                            self.epoch, i, self.config["batch_size"] / (time.time() - btic), name, acc))
                 btic = time.time()
             epoch_time = time.time() - tic
             stats["epoch_time"] = epoch_time
@@ -90,6 +94,7 @@ class MXNetRunner(object):
             del self.kv
             del self.trainer
             del self.loss
+        # TODO: also delete downloaded data as well?
 
     def get_node_ip(self):
         """Returns the IP address of the current node."""
@@ -112,13 +117,15 @@ class MXNetTrainer(object):
                  data_creator,
                  model_creator,
                  loss_creator,
-                 args):
+                 metrics_creator,
+                 config):
         self.data_creator = data_creator
         self.model_creator = model_creator
         self.loss_creator = loss_creator
-        self.args = args
-        self.num_workers = args.num_workers
-        self.num_servers = args.num_servers if args.num_servers else self.num_workers
+        self.metrics_creator = metrics_creator
+        self.config = config
+        self.num_workers = config["num_workers"]
+        self.num_servers = config["num_servers"] if "num_servers" in self.config else self.num_workers
         self.num_runners = self.num_servers + self.num_workers
 
         # Generate actor class
@@ -127,26 +134,26 @@ class MXNetTrainer(object):
         # Start runners
         self.runners = [
             Runner.remote(
-                data_creator,
-                model_creator,
-                loss_creator,
-                self.args)
+                self.data_creator,
+                self.model_creator,
+                self.loss_creator,
+                self.metrics_creator,
+                self.config)
             for i in range(self.num_runners)
         ]
 
         # Compute URL for initializing distributed setup
-        ips = ray.get(
-            [runner.get_node_ip.remote() for runner in self.runners])
-        ports = ray.get(
-            [runner.find_free_port.remote() for runner in self.runners])
+        # ips = ray.get(
+        #     [runner.get_node_ip.remote() for runner in self.runners])
+        # ports = ray.get(
+        #     [runner.find_free_port.remote() for runner in self.runners])
 
-        env = os.environ.copy()
-        env.update({
+        env = {
             "DMLC_PS_ROOT_URI": str(get_host_ip()),
             "DMLC_PS_ROOT_PORT": str(find_free_port()),
             "DMLC_NUM_SERVER": str(self.num_servers),
             "DMLC_NUM_WORKER": str(self.num_workers),
-        })
+        }
         envs = []
         for i in range(self.num_workers + self.num_servers):
             current_env = env.copy()
@@ -154,7 +161,10 @@ class MXNetTrainer(object):
             envs.append(current_env)
 
         env['DMLC_ROLE'] = 'scheduler'
-        subprocess.Popen("python -c 'import mxnet'", shell=True, env=env)  # env need to contain system env to run bash
+        modified_env = os.environ.copy()
+        modified_env.update(env)
+        # Need to contain system env to run bash
+        subprocess.Popen("python -c 'import mxnet'", shell=True, env=modified_env)
 
         ray.get([
             runner.setup_distributed.remote(envs[i])
@@ -171,3 +181,5 @@ class MXNetTrainer(object):
         for runner in self.runners:
             runner.shutdown.remote()
             runner.__ray_terminate__.remote()
+
+# TODO: add validate and predict
