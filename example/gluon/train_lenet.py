@@ -92,17 +92,17 @@ if __name__ == '__main__':
 
     # ray.init()
 
-    sc = init_spark_on_local(cores=8)
-    # sc = init_spark_on_yarn(
-    #     hadoop_conf="/opt/work/hadoop-2.7.2/etc/hadoop",
-    #     conda_name="mxnet",
-    #     num_executor=4,
-    #     executor_cores=16,
-    #     executor_memory="10g",
-    #     driver_memory="2g",
-    #     driver_cores=4,
-    #     extra_executor_memory_for_ray="30g",
-    #     extra_python_lib="mxnet_runner.py")
+    # sc = init_spark_on_local(cores=8)
+    sc = init_spark_on_yarn(
+        hadoop_conf="/opt/work/hadoop-2.7.2/etc/hadoop",
+        conda_name="mxnet",
+        num_executor=4,
+        executor_cores=16,
+        executor_memory="10g",
+        driver_memory="2g",
+        driver_cores=4,
+        extra_executor_memory_for_ray="30g",
+        extra_python_lib="mxnet_runner.py")
 
     ray_ctx = RayContext(sc=sc,
                          object_store_memory="2g",
