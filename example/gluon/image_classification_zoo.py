@@ -143,25 +143,25 @@ if __name__ == '__main__':
                         help='momentum value for optimizer, default is 0.9.')
     parser.add_argument('--wd', type=float, default=0.0001,
                         help='weight decay rate. default is 0.0001.')
-    parser.add_argument('--kvstore', type=str, default='device',
+    parser.add_argument('--kvstore', type=str, default='dist_sync',
                         help='kvstore to use for trainer/module.')
-    parser.add_argument('--log-interval', type=int, default=2,
+    parser.add_argument('--log-interval', type=int, default=50,
                         help='Number of batches to wait before logging.')
     opt = parser.parse_args()
 
     # ray.init()
 
-    sc = init_spark_on_local(cores=8)
-    # sc = init_spark_on_yarn(
-    #     hadoop_conf="/opt/work/hadoop-2.7.2/etc/hadoop",
-    #     conda_name="mxnet",
-    #     num_executor=6,
-    #     executor_cores=28,
-    #     executor_memory="10g",
-    #     driver_memory="2g",
-    #     driver_cores=4,
-    #     extra_executor_memory_for_ray="30g",
-    #     extra_python_lib="mxnet_runner.py")
+    # sc = init_spark_on_local(cores=8)
+    sc = init_spark_on_yarn(
+        hadoop_conf="/opt/work/hadoop-2.7.2/etc/hadoop",
+        conda_name="mxnet",
+        num_executor=6,
+        executor_cores=28,
+        executor_memory="10g",
+        driver_memory="2g",
+        driver_cores=4,
+        extra_executor_memory_for_ray="30g",
+        extra_python_lib="mxnet_runner.py")
     ray_ctx = RayContext(sc=sc,
                          object_store_memory="25g",
                          env={"http_proxy": "http://child-prc.intel.com:913",

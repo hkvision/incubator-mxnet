@@ -73,14 +73,15 @@ class MXNetRunner(object):
                 self.trainer.step(batch.data[0].shape[0])
                 self.metrics.update(label, outputs)
                 if "log_interval" in self.config and not (i + 1) % self.config["log_interval"]:
+                    # This would print on driver for each pid.
+                    print('Epoch[%d] Batch [%d]\tSpeed: %f samples/sec' % (
+                        self.epoch, i, self.config["batch_size"] / (time.time() - btic)))
                     names, accs = self.metrics.get()
                     if not isinstance(names, list):
                         names = [names]
                         accs = [accs]
                     for name, acc in zip(names, accs):
-                        # This would print on driver for each pid.
-                        print('Epoch[%d] Batch [%d]\tSpeed: %f samples/sec\t%s=%f' % (
-                            self.epoch, i, self.config["batch_size"] / (time.time() - btic), name, acc))
+                        print('%s=%f' % (name, acc))
                 btic = time.time()
             epoch_time = time.time() - tic
             stats["epoch_time"] = epoch_time
