@@ -78,6 +78,7 @@ class MXNetRunner(object):
                         names = [names]
                         accs = [accs]
                     for name, acc in zip(names, accs):
+                        # This would print on driver for each pid.
                         print('Epoch[%d] Batch [%d]\tSpeed: %f samples/sec\t%s=%f' % (
                             self.epoch, i, self.config["batch_size"] / (time.time() - btic), name, acc))
                 btic = time.time()
