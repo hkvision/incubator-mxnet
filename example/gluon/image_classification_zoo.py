@@ -155,7 +155,7 @@ if __name__ == '__main__':
     sc = init_spark_on_yarn(
         hadoop_conf="/opt/work/hadoop-2.7.2/etc/hadoop",
         conda_name="mxnet",
-        num_executor=6,
+        num_executor=opt.num_workers,
         executor_cores=28,
         executor_memory="10g",
         driver_memory="2g",
