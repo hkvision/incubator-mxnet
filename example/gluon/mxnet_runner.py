@@ -26,13 +26,15 @@ class MXNetRunner(object):
         if self.is_worker:
             os.environ.update(env)
             import mxnet as mx
+            if "seed" in self.config:
+                mx.random.seed(self.config["seed"])
             self.kv = mx.kv.create(self.config["kvstore"])
             self.train_dataset, self.test_dataset = self.data_creator(self.config, self.kv)
             self.model = self.model_creator(self.config)
             self.loss = self.loss_creator(self.config)
             self.metrics = self.metrics_creator(self.config)
             from mxnet import gluon
-            self.trainer = gluon.Trainer(self.model.collect_params(), 'sgd',
+            self.trainer = gluon.Trainer(self.model.collect_params(), self.config["optimizer"],
                                          optimizer_params=self.config["optimizer_params"],
                                          kvstore=self.kv)
         else:  # server
@@ -43,6 +45,7 @@ class MXNetRunner(object):
 
     def step(self):
         """Runs a training epoch and updates the model parameters."""
+        # TODO: make this as a train_function input same as PyTorchRunner
         self.epoch += 1
         stats = dict()
         stats["epoch"] = self.epoch
@@ -50,7 +53,7 @@ class MXNetRunner(object):
             import time
             tic = time.time()
             self.train_dataset.reset()
-            self.metrics.reset()
+            self.metrics.reset()  # metrics will accumulate for one batch
             btic = time.time()
             for i, batch in enumerate(self.train_dataset):
                 import mxnet as mx
@@ -74,17 +77,48 @@ class MXNetRunner(object):
                 self.metrics.update(label, outputs)
                 if "log_interval" in self.config and not (i + 1) % self.config["log_interval"]:
                     # This would print on driver for each pid.
-                    print('Epoch[%d] Batch [%d]\tSpeed: %f samples/sec' % (
-                        self.epoch, i, self.config["batch_size"] / (time.time() - btic)))
+                    print_output = ""
+                    print_output += 'Epoch[%d] Batch[%d]  Speed: %f samples/sec %s=%f' % (
+                        self.epoch, i, self.config["batch_size"] / (time.time() - btic), "loss", Ls[0].asnumpy().mean())
                     names, accs = self.metrics.get()
                     if not isinstance(names, list):
                         names = [names]
                         accs = [accs]
                     for name, acc in zip(names, accs):
-                        print('%s=%f' % (name, acc))
+                        print_output += ' %s=%f' % (name, acc)
+                    print(print_output)
                 btic = time.time()
             epoch_time = time.time() - tic
             stats["epoch_time"] = epoch_time
+            names, accs = self.metrics.get()
+            if not isinstance(names, list):
+                names = [names]
+                accs = [accs]
+            for name, acc in zip(names, accs):
+                stats[name] = acc
+        return stats
+
+    def validate(self):
+        stats = dict()
+        stats["epoch"] = self.epoch
+        if self.is_worker:
+            self.metrics.reset()
+            self.test_dataset.reset()
+            for batch in self.test_dataset:
+                import mxnet as mx
+                from mxnet import gluon
+                data = gluon.utils.split_and_load(batch.data[0].astype("float32", copy=False),
+                                                  ctx_list=[mx.cpu()], batch_axis=0)
+                label = gluon.utils.split_and_load(batch.label[0].astype("float32", copy=False),
+                                                   ctx_list=[mx.cpu()], batch_axis=0)
+                outputs = [self.model(X) for X in data]
+                self.metrics.update(label, outputs)
+            names, accs = self.metrics.get()
+            if not isinstance(names, list):
+                names = [names]
+                accs = [accs]
+            for name, acc in zip(names, accs):
+                stats[name] = acc
         return stats
 
     def shutdown(self):
@@ -178,10 +212,15 @@ class MXNetTrainer(object):
         stats = ray.get([w.step.remote() for w in self.runners])
         return stats
 
+    def validate(self):
+        """Evaluates the model on the validation data set."""
+        stats = ray.get([w.validate.remote() for w in self.runners])
+        return stats
+
     def shutdown(self):
         """Shuts down runners and releases resources."""
         for runner in self.runners:
             runner.shutdown.remote()
             runner.__ray_terminate__.remote()
 
-# TODO: add validate and predict
+# TODO: add save and restore

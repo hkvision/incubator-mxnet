@@ -61,7 +61,9 @@ def create_config(args):
         "num_workers": args.num_workers,
         "kvstore": args.kvstore,
         "batch_size": args.batch_size,
-        "optimizer_params": {'learning_rate': args.lr}
+        "optimizer": "sgd",
+        "optimizer_params": {'learning_rate': args.lr},
+        "seed": 42
     }
     if args.num_servers:
         config["num_servers"] = args.num_servers
@@ -82,11 +84,11 @@ if __name__ == '__main__':
                         help='training batch size per device (CPU/GPU).')
     parser.add_argument('--epochs', type=int, default=4,
                         help='number of training epochs.')
-    parser.add_argument('--lr', type=float, default=0.1,
-                        help='learning rate. default is 0.1.')
+    parser.add_argument('--lr', type=float, default=0.02,
+                        help='learning rate. default is 0.02.')
     parser.add_argument('--kvstore', type=str, default='dist_sync',
                         help='kvstore to use for trainer/module.')
-    parser.add_argument('--log-interval', type=int, default=500,
+    parser.add_argument('--log-interval', type=int, default=100,
                         help='Number of batches to wait before logging.')
     opt = parser.parse_args()
 
@@ -113,8 +115,13 @@ if __name__ == '__main__':
     trainer = MXNetTrainer(get_data_iters, get_model, get_loss, get_metrics, config)
     for epoch in range(opt.epochs):
         train_stats = trainer.train()
+        val_stats = trainer.validate()
         for stat in train_stats:
-            print(stat)
+            if len(stat.keys()) > 1:  # Worker
+                print(stat)
+        for stat in val_stats:
+            if len(stat.keys()) > 1:  # Worker
+                print(stat)
     ray_ctx.stop()
     sc.stop()
     # ray.shutdown()
