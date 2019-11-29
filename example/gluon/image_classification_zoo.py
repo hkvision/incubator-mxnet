@@ -105,10 +105,12 @@ def create_config(args):
         "use_thumbnail": args.use_thumbnail,
         "batch_norm": args.batch_norm,
         "use_pretrained": args.use_pretrained,
+        "optimizer": 'sgd',
         "optimizer_params": {'learning_rate': args.lr,  # TODO: add learning rate decay
                              'wd': args.wd,
                              'momentum': args.momentum,
                              'multi_precision': True},
+        "seed": 123
     }
     if args.num_servers:
         config["num_servers"] = args.num_servers
@@ -134,8 +136,8 @@ if __name__ == '__main__':
     parser.add_argument('--use-pretrained', action='store_true',
                         help='enable using pretrained model from gluon.')
     parser.add_argument('--batch-size', type=int, default=32,
-                        help='training batch size per device (CPU/GPU).')
-    parser.add_argument('--epochs', type=int, default=120,
+                        help='training batch size per worker.')
+    parser.add_argument('--epochs', type=int, default=80,
                         help='number of training epochs.')
     parser.add_argument('--lr', type=float, default=0.1,
                         help='learning rate. default is 0.1.')
@@ -163,16 +165,21 @@ if __name__ == '__main__':
         extra_executor_memory_for_ray="30g",
         extra_python_lib="mxnet_runner.py")
     ray_ctx = RayContext(sc=sc,
-                         object_store_memory="25g",
-                         env={"http_proxy": "http://child-prc.intel.com:913",
-                              "https_proxy": "http://child-prc.intel.com:913"})
-    ray_ctx.init(object_store_memory="2g")
+                         object_store_memory="10g",
+                         env={"http_proxy": "10.239.4.101:913",
+                              "https_proxy": "10.239.4.101:913"})
+    ray_ctx.init(object_store_memory="10g")
     config = create_config(opt)
     trainer = MXNetTrainer(get_data_iters, get_model, get_loss, get_metrics, config)
     for epoch in range(opt.epochs):
         train_stats = trainer.train()
+        val_stats = trainer.validate()
         for stat in train_stats:
-            print(stat)
+            if len(stat.keys()) > 1:  # Worker
+                print(stat)
+        for stat in val_stats:
+            if len(stat.keys()) > 1:  # Worker
+                print(stat)
     ray_ctx.stop()
     sc.stop()
     # ray.shutdown()
