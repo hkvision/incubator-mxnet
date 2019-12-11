@@ -58,7 +58,8 @@ class MXNetRunner(object):
             for i, batch in enumerate(self.train_dataset):
                 import mxnet as mx
                 from mxnet import gluon
-                # TODO: support multiple cpus?
+                # MXNet treats all CPUs on a single machine as a single device.
+                # So whether you specify cpu(0) or cpu(), MXNet will use all CPU cores on the machine.
                 data = gluon.utils.split_and_load(batch.data[0].astype("float32"), ctx_list=[mx.cpu()], batch_axis=0)
                 label = gluon.utils.split_and_load(batch.label[0].astype("float32"), ctx_list=[mx.cpu()], batch_axis=0)
                 outputs = []
@@ -154,7 +155,9 @@ class MXNetTrainer(object):
                  model_creator,
                  loss_creator,
                  metrics_creator,
-                 config):
+                 config,
+                 # Specify cpu resources for actors so that two actors won't use the same raylet.
+                 worker_cpus=None):
         self.data_creator = data_creator
         self.model_creator = model_creator
         self.loss_creator = loss_creator
@@ -165,7 +168,7 @@ class MXNetTrainer(object):
         self.num_runners = self.num_servers + self.num_workers
 
         # Generate actor class
-        Runner = ray.remote(MXNetRunner)
+        Runner = ray.remote(num_cpus=worker_cpus)(MXNetRunner) if worker_cpus else ray.remote(MXNetRunner)
 
         # Start runners
         self.runners = [
@@ -223,4 +226,4 @@ class MXNetTrainer(object):
             runner.shutdown.remote()
             runner.__ray_terminate__.remote()
 
-# TODO: add save and restore
+# TODO: add model save and restore

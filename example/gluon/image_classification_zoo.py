@@ -18,7 +18,6 @@
 from __future__ import division
 
 import argparse
-import logging
 
 import ray
 import mxnet as mx
@@ -153,24 +152,29 @@ if __name__ == '__main__':
 
     # ray.init()
 
-    # sc = init_spark_on_local(cores=8)
+    # sc = init_spark_on_local(cores=32)
     sc = init_spark_on_yarn(
         hadoop_conf="/opt/work/hadoop-2.7.2/etc/hadoop",
         conda_name="mxnet",
-        num_executor=opt.num_workers,
-        executor_cores=28,
+        # 1 executor for ray head node.
+        # Each executor is placed on one node. Each raylet is started by an executor.
+        # Each MXNetRunner will run on one raylet, namely one node.
+        num_executor=2*opt.num_workers+1,
+        executor_cores=44,
         executor_memory="10g",
         driver_memory="2g",
-        driver_cores=4,
-        extra_executor_memory_for_ray="30g",
+        driver_cores=16,
+        extra_executor_memory_for_ray="5g",
         extra_python_lib="mxnet_runner.py")
     ray_ctx = RayContext(sc=sc,
                          object_store_memory="10g",
                          env={"http_proxy": "10.239.4.101:913",
-                              "https_proxy": "10.239.4.101:913"})
+                              "https_proxy": "10.239.4.101:913",
+                              "OMP_NUM_THREADS": "44",
+                              "KMP_AFFINITY": "granularity=fine,compact,1,0"})
     ray_ctx.init(object_store_memory="10g")
     config = create_config(opt)
-    trainer = MXNetTrainer(get_data_iters, get_model, get_loss, get_metrics, config)
+    trainer = MXNetTrainer(get_data_iters, get_model, get_loss, get_metrics, config, worker_cpus=44)
     for epoch in range(opt.epochs):
         train_stats = trainer.train()
         val_stats = trainer.validate()
