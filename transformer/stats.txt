@@ -1,0 +1,5 @@
+INFO:root:Epoch[7] Batch [0-2]  Speed: 31355.16 samples/sec     accuracy=0.498896
+INFO:root:Epoch[7] Batch [2-4]  Speed: 32186.80 samples/sec     accuracy=0.497563
+INFO:root:Epoch[7] Batch [4-6]  Speed: 32881.59 samples/sec     accuracy=0.496469
+INFO:root:Epoch[7] Batch [6-8]  Speed: 31656.48 samples/sec     accuracy=0.503250
+INFO:root:Epoch[7] Batch [8-10] Speed: 31753.76 samples/sec     accuracy=0.501391
