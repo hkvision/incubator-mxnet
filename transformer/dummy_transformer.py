@@ -65,7 +65,7 @@ from gluonnlp.model.transformer import TransformerEncoder
 encoder = TransformerEncoder(units=100, hidden_size=256, num_heads=4, num_layers=2, max_length=5, dropout=0.1)
 encoder_output, att = encoder.hybrid_forward(mx.sym, inputs=plu_embed)
 flatten = mx.symbol.flatten(encoder_output, "flatten")
-encoder_features = mx.symbol.FullyConnected(data=flatten, num_hidden=100, name='encoder_features')
+encoder_features = mx.symbol.FullyConnected(data=flatten, num_hidden=200, name='encoder_features')
 
 context_features = mx.symbol.broadcast_mul((1 + bkidx_embed + time_embed + weather_embed + feels_embed),
                                            encoder_features, name='latent_cross')
