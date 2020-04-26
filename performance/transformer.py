@@ -7,7 +7,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
-batch_size = 8000
+batch_size = 32000
 num_epoch = 10
 model_prefix = 'drivethru_attention_d'
 n_plus, n_time, n_bkids, n_weather, n_feels = 653, 167, 4770, 46, 20
