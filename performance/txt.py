@@ -183,9 +183,9 @@ bkidx = mx.symbol.Variable('bkidx')
 timeidx = mx.symbol.Variable('timeidx')
 feels_bucket = mx.symbol.Variable('feels_bucket')
 weatheridx = mx.symbol.Variable('weatheridx')
-txt = TxT(num_items=n_plus, context_dims=[167, 4770, 46, 20])
+txt = TxT(num_items=n_plus, context_dims=[n_time, n_bkids, n_weather, n_feels])
 model = txt.hybrid_forward(mx.symbol, input_item=pluids,
-                           input_context_list=[bkidx, timeidx, feels_bucket, weatheridx],
+                           input_context_list=[timeidx, bkidx, weatheridx, feels_bucket],
                            label=y_true)
 mod = mx.mod.Module(symbol=model,
                     data_names=['pluids', 'bkidx', 'timeidx', 'feels_bucket', 'weatheridx'],
